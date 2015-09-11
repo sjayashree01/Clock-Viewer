@@ -1,0 +1,685 @@
+
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=7,IE=9" />
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no" />
+    <title>Activities Viewer</title>
+    <link rel="stylesheet" type="text/css" href="http://serverapi.arcgisonline.com/jsapi/arcgis/3.5/js/dojo/dijit/themes/tundra/tundra.css">
+    <link rel="stylesheet" type="text/css" href="http://serverapi.arcgisonline.com/jsapi/arcgis/3.5/js/esri/css/esri.css" />
+    <link rel="stylesheet" type="text/css" href="css/layout.css">
+    <style>
+      
+    #titlePane{
+      width:240px;
+    }
+    .tundra .dijitTitlePaneTitle {
+      background: #808775;
+      font-weight:600;
+      border:solid 1px #29201A;
+    }
+    .tundra .dijitTitlePaneTitleHover {
+      background:#808775;
+    }
+    .tundra .dijitTitlePaneTitleActive {
+      background:#808775;
+    }
+    .tundra .dijitTitlePaneContentOuter {
+      border-right: solid 2px #808775 !important;
+      border-bottom: solid 2px #808775 !important;
+      border-left: solid 2px #808775 !important;
+    }
+    </style>
+    
+    <script>var dojoConfig = { parseOnLoad:true };</script>
+    <script  type="text/javascript" src="http://serverapi.arcgisonline.com/jsapi/arcgis/3.5/"></script>
+	<script src="http://code.jquery.com/jquery-1.9.1.js"></script>   
+    <script type="text/javascript" src="scripts/ICD_withMap_v2.js"></script>
+
+    <script type="text/javascript">
+        dojo.require("dijit.layout.BorderContainer");
+        dojo.require("dijit.layout.ContentPane");
+        dojo.require("dijit.TitlePane"); 
+        dojo.require("dijit.layout.StackContainer");
+        
+        dojo.require("esri.map");
+        dojo.require("esri.dijit.Measurement");
+        dojo.require("esri.dijit.Scalebar");
+        dojo.require("esri.layers.FeatureLayer");
+        
+        dojo.require("esri.dijit.Popup");
+        dojo.require("dojox.lang.functional.fold")
+        dojo.require("dojox.data.CsvStore"); //added for processing csv file
+		
+        dojo.require("esri.dijit.TimeSlider");
+        dojo.require("esri.graphic");
+        dojo.require("esri.geometry");
+        dojo.require("esri.symbol");
+
+        var globals = {};
+        globals.map = null;
+        globals.popup = null;
+		
+	    var timeSlider = null;
+        var timeExtent = null;
+	    var tsDiv = null;
+	    //define activity styles
+        var activityStyles = [];
+        activityStyles.push([1, "#77BB88", "Home"]);
+        activityStyles.push([2, "#FF0000", "Work"]);
+        activityStyles.push([3, "#550055", "Shop"]);
+        activityStyles.push([4, "#558800", "Other"]);
+        activityStyles.push([5, "#0000FF", "School"]);
+        activityStyles.push([6, "#0000FF", "College"]);
+                
+        //whether this application is development or not
+        globals.isDevelopmentVersion = true;
+        
+        //base URL for the web services
+        globals.webServiceBaseUrl = null;
+        if(globals.isDevelopmentVersion)
+            globals.webServiceBaseUrl = "./web_services/";
+        else
+            globals.webServiceBaseUrl = "./web_services/";
+        
+        //url for individual's activities
+        globals.dataURL = globals.webServiceBaseUrl+"getActivityData.php";
+        globals.householdDataURL = globals.webServiceBaseUrl + "getHouseholdActivityData.php";
+		
+				              
+        //dojo csvStore for retrieving csv data
+        globals.csvStore = null;
+        
+        globals.myICD = null;
+        globals.ICDgraphicClickHandler = null;  
+
+        //called by dojo.ready(), first real function
+        function init() {
+            //popup object used for the map
+            globals.popup = new esri.dijit.Popup(null, dojo.create("div"));
+            
+            //initial extent, set to Sweden for now            
+            var extent = new esri.geometry.Extent({ xmin: 10, ymin: 55, xmax: 25, ymax: 70, spatialReference: { wkid: 4326} });
+            
+            //the base map we use, initial extent is set by globals.FocusLevelTree[0][2] and we use globals.popup for its infoWindow
+            globals.map = new esri.Map("map", {
+                basemap: "streets",
+                extent: extent,
+                infoWindow: globals.popup
+            });
+        
+            dojo.addClass(globals.map.infoWindow.domNode, "chrome");
+
+            dojo.connect(dijit.byId('map'), 'resize', globals.map, globals.map.resize);
+
+            var measurement = new esri.dijit.Measurement({
+               map: globals.map
+            }, dojo.byId('measurementDiv'));
+            measurement.startup();
+        
+            //create instance of an Interactive Clock Drawing
+            globals.myICD = new ICD("globals.myICD");
+            globals.myICD.parentNode = document.getElementById("ICDgraphicArea");
+            //link the ICD to the map
+            globals.myICD.linkedMap = globals.map;           
+        }
+
+        
+        function getActivityData() {	
+	
+            var table_name = document.getElementById("activity_table").value;
+            var person_id;   //store the PID
+		           
+            if (document.getElementById("PID").value != '')
+                person_id = document.getElementById("PID").value;
+            else { //generate a random one
+                var min_pid, max_pid;
+                
+                if (table_name == 'ISRAEL_ACTIVITIES_V1') {
+                    min_pid = 0;
+                    max_pid = 7765799;
+                }
+            
+                if (table_name == 'ISRAEL_ACTIVITIES_V3') {
+                    min_pid = 1;
+                    max_pid = 7517066;
+                }
+                
+                if (table_name == 'SWEDEN_ACTIVITIES_V1') {
+                    min_pid = 0;
+                    max_pid = 9482854;
+                }
+                
+                if (table_name == 'SWEDEN_ACTIVITIES_V3') {
+                    min_pid = 1;
+                    max_pid = 9482855;
+                }
+                
+        	    if (table_name == 'UK_ACTIVITIES_V3') {
+    		        min_pid = 1;
+		            max_pid = 51365592;
+		        }
+
+                if (table_name == 'LOCATED_DELHI_ACTIVITIES_V1_1') {
+                    min_pid = 0;
+                    max_pid = 13850506;
+                }
+                
+                if (table_name == 'LOCATED_DELHI_ACTIVITIES_V2' || table_name == 'LOCATED_DELHI_ACTIVITIES_V3') {
+                    min_pid = 10000000;
+                    max_pid = 23852753;
+                }
+            
+                person_id = Math.floor(Math.random()*(max_pid - min_pid + 1)) + min_pid;
+            } 
+			
+			globals.tableName = table_name;
+			globals.personId = person_id;		
+			
+            dojo.byId("messages").innerHTML = "Selected table is: " + table_name + "<br />PID is: " + person_id + "<br />Click on 'Submit' for another PID";
+            
+			if (document.getElementById("showHousehold").checked ==  true){
+				getHouseholdActivityData();
+			}
+			else{
+				globals.csvStore = null;
+				//request data from web service (requires a pid as input parameters)
+				var url = "";
+				url = globals.dataURL+"?table="+table_name+"&pid="+person_id;			
+				//method using dojox data:
+				globals.csvStore = new dojox.data.CsvStore({
+					url: url
+				});            
+				globals.csvStore.fetch({ onComplete: activityDataCSVready, onError: csvOnError });	
+				clearHouseholdActivityData();
+			}
+        }
+        
+        
+        function activityDataCSVready(items, request) {
+            console.log("activityDataCSVready...");
+            dojo.byId("errors").innerHTML = "";
+
+            //csvHeaderAndData includes header array and data array
+            var csvHeaderAndData = processDataFromCSVStore(items);
+            var activityHeader = csvHeaderAndData[0];
+            var activityData = csvHeaderAndData[1];
+            
+            //pass activity header and data to ICD
+            globals.myICD.LoadActivityDataDirect(activityHeader, activityData);
+
+            //set clock type
+            if (Number(document.getElementById("clocktype").value) == 24) {
+                //set time for 24 hours (86400 seconds)
+                globals.myICD.maxTime = 86400;
+                globals.myICD.divisions = 24;
+            }
+            else {
+                //set time for 48 hours (172800 seconds)
+                globals.myICD.maxTime = 172800;
+                globals.myICD.divisions = 48;
+            }
+
+            globals.myICD.Initialize();
+            globals.myICD.createAnnuli();
+            globals.myICD.CreateMapFeatures();
+            if (globals.ICDgraphicClickHandler) {
+                dojo.disconnect(globals.ICDgraphicClickHandler);
+            }
+            globals.ICDgraphicClickHandler = dojo.connect(globals.myICD.linkedFeatLayer, "onClick", function(evt) { globals.myICD.SelectData(evt.graphic.attributes.anum);
+              globals.myICD.HighlightData(evt.graphic.attributes.anum);
+            });
+			if(globals.myICD.linkedFeatLayer.graphics.length > 1) {
+				globals.map.setExtent(esri.graphicsExtent(globals.myICD.linkedFeatLayer.graphics), true);  
+			}				
+			else if(globals.myICD.linkedFeatLayer.graphics.length == 1)
+				globals.map.centerAt(globals.myICD.linkedFeatLayer.graphics[0].geometry);
+		}
+
+        //error function for csvStore when it cannot fetch data successfully
+        //don't display anything for now...
+        function csvOnError(error) {
+          //  dojo.byId("errors").innerHTML = "<br>No Activities Data for this PID.";
+        }
+   
+        //retrieve data from the global csvStore (hard coded as we only have one global csvStore)
+        //return data in an array: the 1st item is the header array and the 2nd item is the csvData array
+        //used in *Ready() functions, e.g., CountyOrCensusBlockLevelCSVready(), pointDataCSVReady(), activityDataCSVready()
+        //added by dawenx on 03/18/2013
+        function processDataFromCSVStore(items) {
+            
+            var csvData = [];
+            var csvHeader = null;
+            for (var i = 0; i < items.length; i++) {
+                var currentItemAttributes = globals.csvStore.getAttributes(items[i]);
+                //console.log("item " + i.toString() + ": " + currentItemAttributes.toString());
+                if (csvHeader == null) {
+                    csvHeader = currentItemAttributes;
+                }
+
+                var itemData = [];
+                for (var j = 0; j < csvHeader.length; j++) {
+                    if (parseFloat(globals.csvStore.getValue(items[i], csvHeader[j]))) {
+                        itemData.push(parseFloat(globals.csvStore.getValue(items[i], csvHeader[j])));
+                    }
+                    else {
+                        itemData.push(globals.csvStore.getValue(items[i], csvHeader[j]));
+                    }
+                }
+                csvData.push(itemData);
+            }
+            
+            //return both arrays
+            return [csvHeader, csvData];
+        }
+		
+		
+	
+		function getHouseholdActivityData(){
+			$("#timeSliderDiv").show();
+		    if (dijit.byId('timeSlider')) { //delete previous timeslider
+				dijit.byId('timeSlider').destroy();
+				initSlider();
+			}
+			
+			globals.csvStore = null;
+			$("#ICDgraphicArea").hide();
+			var removeActivityLyr = globals.map.getLayer('ICD_mapfeatures');
+			if (removeActivityLyr) {
+				globals.map.removeLayer(removeActivityLyr);
+				console.log("cleared the ICD_mapfeatures layer");
+			}
+			
+			//request data from web service (requires a pid as input parameters)
+            var url = "";
+            url = globals.householdDataURL + "?table=" + globals.tableName + "&pid=" + globals.personId;
+            //method using dojox data:
+            globals.csvStore = new dojox.data.CsvStore({
+            url: url
+             });
+            globals.csvStore.fetch({
+            onComplete: householdActivityDataCSVready,
+             onError: csvOnError
+             });	
+			dojo.byId("messages").innerHTML = "Selected table is: " + globals.tableName + "<br />PID is: " + globals.personId + "<br />Click on 'Submit' for another PID";
+		}
+		
+		function clearHouseholdActivityData() {
+			
+			$("#ICDgraphicArea").show();
+			$("#timeSliderDiv").hide();
+			dojo.byId("timeSliderText").innerHTML = "";
+			clearTable();
+			var removeLyrVariable = globals.map.getLayer('ICD_mapfeatures_v2');
+			if (removeLyrVariable) {
+				globals.map.removeLayer(removeLyrVariable);
+			}
+		}
+        
+		function householdActivityDataCSVready(items, request){				
+			if(globals.linkedFeatLayer){
+				globals.linkedFeatLayer.hide();
+			}
+			globals.map.infoWindow.hide();
+			globals.map.graphics.clear();
+			
+		    generateTableHeader();                            
+            var csvHeaderAndData = processDataFromCSVStore(items);
+            var headerInfo = csvHeaderAndData[0];
+            var activities = csvHeaderAndData[1];
+            globals.activities = activities;
+			globals.linkedFeatLayer = new esri.layers.GraphicsLayer({
+                id: "ICD_mapfeatures_v2"
+                });
+            globals.map.addLayer(globals.linkedFeatLayer);			
+            dojo.connect(globals.linkedFeatLayer, "onUpdate", initSlider);                 
+			var geometry;
+            var pointGraphic;
+                           
+			for (var i = 0; i < activities.length; i++) {
+                var attr = [];
+                for (var j = 0; j < headerInfo.length; j++) {
+                    attr[headerInfo[j]] = activities[i][j];
+                }
+    
+                var purpose = activities[i][2];
+                var pointColor = "";
+                if (purpose == 1) pointColor = "#77BB88";
+                if (purpose == 2) pointColor = "#FF0000";
+                if (purpose == 3) pointColor = "#550055";
+                if (purpose == 4) pointColor = "#558800";
+                if (purpose == 5) pointColor = "#0000FF";
+                if (purpose == 6) pointColor = "#0000FF";
+    
+                var sms = new esri.symbol.SimpleMarkerSymbol(esri.symbol.SimpleMarkerSymbol.STYLE_CIRCLE, 10, new esri.symbol.SimpleLineSymbol(esri.symbol.SimpleLineSymbol.STYLE_SOLID, new dojo.Color(pointColor), 10), new dojo.Color(pointColor));
+                var activityInfoTemplate = new esri.InfoTemplate();
+                activityInfoTemplate.setTitle("Activity Details");
+                activityInfoTemplate.setContent("<b>PID: </b>${pid:convertPID}<br/>" + "<b>Activity #: </b>${anum}<br/>" + "<b>Purpose: </b>${purpose:convertPurpose}<br/>" + "<b>Start Time: </b>${starttime:convertStarttime}<br/>" + "<b>Longitude: </b>${longitude}<br/>" + "<b>Latitude: </b>${latitude}<br/>" + "<b>Duration: </b>${duration:convertDuration}");
+    
+                geometry = new esri.geometry.Point(activities[i][5], activities[i][6]);
+                pointGraphic = new esri.Graphic(geometry, sms, attr, activityInfoTemplate);
+                globals.linkedFeatLayer.add(pointGraphic);
+                globals.linkedFeatLayer.redraw();
+		    }
+
+            for (var i = 0; i < globals.linkedFeatLayer.graphics.length; i++) { //check the loop > to remove or not
+                var startTimeInHours = (globals.linkedFeatLayer.graphics[i].attributes.starttime) / 3600;
+                var endTimeInHours = ((globals.linkedFeatLayer.graphics[i].attributes.starttime) / 3600) + ((globals.linkedFeatLayer.graphics[i].attributes.duration) / 3600);
+    
+                if ((0 >= startTimeInHours) && (0 <= endTimeInHours)) { //hide or show points by checking start time
+                    globals.linkedFeatLayer.graphics[i].show();	
+                    globals.map.graphics.add(globals.linkedFeatLayer.graphics[i]);
+                    //timeSliderText
+                    dojo.byId("timeSliderText").innerHTML = "<b>Activities at time 0:00</b>";
+                    generateTableRows(i);
+                } 
+                else {
+                    globals.linkedFeatLayer.graphics[i].hide();								
+                }
+			}
+			globals.linkedFeatLayer.redraw();						
+            globals.map.setExtent(esri.graphicsExtent(globals.linkedFeatLayer.graphics), true);
+        }
+		
+	
+		function initSlider() {						
+                
+            if (timeSlider != null) {
+                timeSlider = null;
+            }				
+                                        
+            if (timeSlider == null) { //start of time slider
+                tsDiv = dojo.create("div", null, dojo.byId("timeSliderDiv"));
+                timeSlider = new esri.dijit.TimeSlider({
+                    id: "timeSlider",
+                    style: "width: 100%;"
+                }, tsDiv);
+                globals.map.setTimeSlider(timeSlider);
+                timeExtent = new esri.TimeExtent();
+                timeExtent.startTime = new Date("01/01/1970"); //arbitrary date value. here only 00 to 24 hours is considered. date could be anything.
+                timeExtent.endTime = new Date("01/01/1970"); //javascript date object always requires date + time
+                var startHour = 0;
+                var endHour = 24; //for future purpose: check if 24 hrs or 48 hrs is needed or not.
+                timeExtent.startTime.setHours(startHour);
+                timeExtent.endTime.setHours(endHour);
+                timeSlider.setThumbCount(1);
+                timeSlider.createTimeStopsByTimeInterval(timeExtent, 3, 'esriTimeUnitsHours');
+                timeSlider.setThumbIndexes([0]);
+                timeSlider.setThumbMovingRate(1000);
+                timeSlider.singleThumbAsTimeInstant(true);
+                timeSlider.startup();
+                 
+                //Label for timeslider
+                var labels = [];
+                for (var j = 0; j < timeSlider.timeStops.length - 1; j++) {
+                    var labelString = timeSlider.timeStops[j].getHours().toString() + ":00";
+                    labels.push(labelString);
+                }
+                        
+                var finalLabel = "24:00";
+                labels.push(finalLabel);
+                timeSlider.setLabels(labels);
+                        
+                dojo.connect(timeSlider, "onTimeExtentChange", function(timeExtent) {
+                    //generate table header info
+                    generateTableHeader();
+                    globals.map.infoWindow.hide();
+                    var loopStartTime = timeExtent.startTime.getHours();
+                    //var loopEndTime = timeExtent.endTime.getHours();
+                    //earlier this was a bug while trying to display 24 hours
+                    if(timeExtent.endTime.getDate() == 2)
+                        var loopEndTime = 24;
+                    else
+                        var loopEndTime = timeExtent.endTime.getHours();
+                    
+                    for (var i = 0; i < globals.linkedFeatLayer.graphics.length; i++) {
+                        var startTimeHours = (globals.linkedFeatLayer.graphics[i].attributes.starttime) / 3600;
+                        var endTimeHours = ((globals.linkedFeatLayer.graphics[i].attributes.starttime) / 3600) + ((globals.linkedFeatLayer.graphics[i].attributes.duration) / 3600);
+                        console.log("Start time is " + startTimeHours.toString());
+                        if ((loopEndTime >= startTimeHours) && (loopEndTime <= endTimeHours)) { //hide or show points by checking start time
+                            globals.linkedFeatLayer.graphics[i].show();
+                            globals.map.graphics.add(globals.linkedFeatLayer.graphics[i]);
+                            console.log("end time for the loop" + endTimeHours);
+                            dojo.byId("timeSliderText").innerHTML = "<b>Activities at time " + loopEndTime.toString()+":00 </b>";
+                            //populate table rows
+                            generateTableRows(i);
+                        } 
+                        else {
+                            globals.linkedFeatLayer.graphics[i].hide();
+                        }
+                    }
+                    globals.linkedFeatLayer.refresh();
+                    globals.map.setExtent(esri.graphicsExtent(globals.linkedFeatLayer.graphics), true);
+                });
+                globals.linkedFeatLayer.refresh();
+                globals.map.setExtent(esri.graphicsExtent(globals.linkedFeatLayer.graphics), true);
+            } //end of timeslider
+            else {
+                    alert("timeslider already exists!");
+            }
+        }
+        //************************************* Start of Format Conversion for Infowindow*************************************//	   
+
+        function convertPID(value, key, data) {
+            var result = "";
+            switch (key) {
+              case "pid":
+                 result = data.pid;
+                 break;
+            }
+            return result;
+        }
+
+        function convertPurpose(value, key, data) {
+            var result = "";
+            switch (key) {
+                case "purpose":
+                    if (data.purpose == "1") {
+                        result = "1 (Home)";
+                    } else if (data.purpose == "2") {
+                        result = "2 (Work)";
+                    } else if (data.purpose == "3") {
+                        result = "3 (Shop)";
+                    } else if (data.purpose == "4") {
+                        result = "4 (Other)";
+                    } else if (data.purpose == "5") {
+                        result = "5 (School)";
+                    } else if (data.purpose == "6") {
+                        result = "6 (College)";
+                    }
+                    break;
+            }
+            return result;
+        }
+
+      //Prototype to convert seconds to hh:mm:ss
+      String.prototype.toHHMMSS = function() {
+        var sec_num = parseInt(this, 10);
+        var hours = Math.floor(sec_num / 3600);
+        var minutes = Math.floor((sec_num - (hours * 3600)) / 60);
+        var seconds = sec_num - (hours * 3600) - (minutes * 60);
+        if (hours < 10) {
+          hours = "0" + hours;
+        }
+        if (minutes < 10) {
+          minutes = "0" + minutes;
+        }
+        if (seconds < 10) {
+          seconds = "0" + seconds;
+        }
+        var time = hours + ':' + minutes + ':' + seconds;
+        return time;
+      }
+
+      function convertDuration(value, key, data) {
+        var result = "";
+        var durationMinutes = 0;
+        var durationSeconds = 0;
+        var durationHHMMSS = "";
+        switch (key) {
+        case "duration":
+          durationSeconds = data.duration;
+          durationMinutes = (data.duration) / 3600;
+          durationMinutes = Math.floor(durationMinutes);
+          durationHHMMSS = durationSeconds.toString().toHHMMSS();
+          result = durationSeconds + " (" + durationHHMMSS.toString() + ")";
+          break;
+        }
+        return result;
+      }
+
+      function convertStarttime(value, key, data) {
+        var result = "";
+        var starttimeMinutes = 0;
+        var starttimeSeconds = 0;
+        var starttimeHHMMSS = "";
+        switch (key) {
+        case "starttime":
+          starttimeSeconds = data.starttime;
+          starttimeMinutes = (data.starttime) / 3600;
+          starttimeMinutes = Math.floor(starttimeMinutes);
+          starttimeHHMMSS = starttimeSeconds.toString().toHHMMSS();
+          result = starttimeSeconds + " (" + starttimeHHMMSS.toString() + ")";
+          break;
+        }
+        return result;
+      }
+        //************************************* End of Format Conversion for Infowindow*************************************//
+        //************************************* Clear Table Function******************//
+
+      function clearTable() {
+        var tableDiv = document.getElementById("tableDiv");
+        var tabledivlength = tableDiv.childNodes.length;
+        while (tableDiv.childNodes.length > 0) {
+          var i = tableDiv.childNodes.length - 1;
+          tableDiv.removeChild(tableDiv.childNodes[i]);
+          i--;
+        }
+      }
+        //**************************************************************************//
+
+      function generateTableHeader() { //table creation					 
+        clearTable(); //clear previously created table
+
+        var tableDiv = document.getElementById("tableDiv");
+        globals.table = document.createElement("table");
+        //table.border = "2";
+        var headerRow = globals.table.insertRow(0);
+        var headercell1 = headerRow.insertCell(0);
+        var headercell2 = headerRow.insertCell(1);
+        var headercell3 = headerRow.insertCell(2);
+        headercell1.innerHTML = "<b>PID</b>";
+        headercell2.innerHTML = "<b>Color</b>";
+        headercell3.innerHTML = "<b>Purpose</b>";
+
+      }
+
+      function generateTableRows(i) {
+        //table creation
+        //adding rows to table
+        var row = globals.table.insertRow(-1);
+        var cell1 = row.insertCell(0);
+        var cell2 = row.insertCell(1);
+        var cell3 = row.insertCell(2);
+        cell1.innerHTML = globals.linkedFeatLayer.graphics[i].attributes.pid.toString();
+        //cell2.innerHTML = globals.linkedFeatLayer.graphics[i].attributes.purpose.toString();
+        cell2.setAttribute("style", "background-color: " + activityStyles[globals.linkedFeatLayer.graphics[i].attributes.purpose - 1][1] + ";");
+        cell3.innerHTML = activityStyles[globals.linkedFeatLayer.graphics[i].attributes.purpose - 1][2];
+        tableDiv.appendChild(globals.table);
+      }
+        //Switch the display for points between 'points cluster' and original method
+        function showHousehold(cb) {
+            if(cb.checked == true)
+                $("#clockDisplayOptions").hide();
+            else
+                $("#clockDisplayOptions").show();
+        }
+
+        //start point for this page
+        dojo.ready(init);
+    </script>
+
+</head>
+<body class="tundra">
+    <div id="mainWindow" data-dojo-type="dijit.layout.BorderContainer" data-dojo-props="design:'headline',gutters:false"
+        style="width: 100%; height: 100%; margin: 0;">
+        <!-- Header Section-->
+        <div id="header" data-dojo-type="dijit.layout.ContentPane" data-dojo-props="region:'top'">
+            <div id="title">
+			<span style="top:5px;font-size:20px;padding:5px 5px;">
+                Activities Viewer
+				</span>
+                <span style="float:right"><a href="http://ndssl.vbi.vt.edu/gis/#act">About</a></span>
+				</div>				
+				<div id="timeSliderDiv" style="top:10px; z-Index:999;">
+				</div>
+        </div>
+        <!--Sidebar Section-->
+        <div id="leftPane" data-dojo-type="dijit.layout.ContentPane" data-dojo-props="region:'left'">
+            <div id="leftPaneContent" data-dojo-type="dijit.layout.BorderContainer" data-dojo-props="design:'headline',gutters:false"
+                style="width: 100%; height: 100%;">
+                <!--Sidebar Content-->
+                <div id="panel1" class="panel_content" data-dojo-type="dijit.layout.ContentPane"
+                    data-dojo-props="region:'center'">
+                    <div id="description">
+						<div><b>Step 1: Set Viewer Mode:</b><br>
+						<input id = "showHousehold" type="checkbox" onchange='showHousehold(this);'>Show/Hide Household Activity<br>
+                    </div>
+					<br/>
+                        
+                    <div id="tables"><b>Step 2: Choose a Region:</b>                        
+                    <select id="activity_table" name="activity_table"><option value="" selected>&nbsp;</option>
+<option value="ISRAEL_ACTIVITIES_V1">ISRAEL_ACTIVITIES_V1</option>
+<option value="ISRAEL_ACTIVITIES_V3">ISRAEL_ACTIVITIES_V3</option>
+<option value="LOCATED_DELHI_ACTIVITIES_V1_1">DELHI_ACTIVITIES_V1_1</option>
+<option value="LOCATED_DELHI_ACTIVITIES_V2">DELHI_ACTIVITIES_V2</option>
+<option value="LOCATED_DELHI_ACTIVITIES_V3">DELHI_ACTIVITIES_V3</option>
+<option value="SWEDEN_ACTIVITIES_V1">SWEDEN_ACTIVITIES_V1</option>
+<option value="SWEDEN_ACTIVITIES_V3">SWEDEN_ACTIVITIES_V3</option>
+<option value="UK_ACTIVITIES_V3">UK_ACTIVITIES_V3</option>
+</select><br /><br />Input a PID: (optional)<br /><input type="text" size="12" id="PID" value=''/><br><button onclick='getActivityData()'/>Submit</button>                    <br><b>Step 3: Click on above 'Submit':</b>
+                    </div>
+                    <br>
+                    
+                    <div id="clockDisplayOptions">
+                        Activity Clock:
+                        <select id="clocktype">
+                           <option id="clocktype_24" value="24">24-hour</option>
+                           <option id="clocktype_48" value="48" selected="selected">48-hour</option>
+                        </select>
+                    </div>
+                    
+                    <br />                     
+                    <div id="messages"></div>
+                    <div id="errors"></div>
+                                      
+                    <div id="ICDgraphicArea"> </div>
+						
+        	        <br/> 
+	         	    <div id="timeSliderText"></div>
+			        <br/>
+		            <div id="tableDiv"> </div>
+                </div>
+            </div>
+            <div id="redrawContentPane" data-dojo-type="dijit.layout.ContentPane" data-dojo-props="region:'bottom'">
+                <div id="redraw">Version: 1.5</div>
+            </div>
+            </div>
+        </div>
+        <!-- Map Section -->
+        <div id="map" data-dojo-type="dijit.layout.ContentPane" data-dojo-props="region:'center'">
+            <div id="top-shadow">
+            </div>
+            <div id="left-shadow">
+            </div>
+            <div style="position:absolute; right:20px; top:20px; z-Index:999;">
+            <div id="titlePane" data-dojo-type="dijit.TitlePane" data-dojo-props="title:'Measurement', closable:'false', open:'true'">
+            <div id="measurementDiv"></div>
+            <span style="font-size:small;padding:5px 5px;">Choose a measurement, then click on the map, double click to finish.</span>
+          </div>
+        </div>
+        </div>
+    </div>
+</body>
+</html>
