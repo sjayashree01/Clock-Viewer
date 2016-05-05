@@ -1,0 +1,6 @@
+{
+  "name": "Activity Clock Viewer",
+  "tagline": "JavaScript, Clock, Arcgis, Esri",
+  "body": "This application generates an map interaction with a person's activity for 24 hours. ArcGIS Javascript API is used for the mapping.\r\n\r\n# Author:\r\n[@sjayashree01](https://github.com/sjayashree01)\r\n\r\n",
+  "note": "Don't delete this file! It's used internally to help with page regeneration."
+}
